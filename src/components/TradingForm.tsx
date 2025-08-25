@@ -5,61 +5,70 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Slider } from '@/components/ui/slider'
 import { useAccount } from 'wagmi'
-import { useTradingStore } from '@/store/trading'
-import { useTrading } from '@/hooks/useTrading'
+import { useMarketQuery } from '@/hooks/useMarketQuery'
+import { useTradingMutations } from '@/hooks/useTradingMutations'
 import { formatCurrency, calculateLeverage } from '@/lib/utils'
-import { TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertTriangle, Loader2 } from 'lucide-react'
 
 export function TradingForm() {
   const { isConnected } = useAccount()
-  const { 
-    tradeDirection, 
-    tradeSize, 
-    tradeMargin, 
-    tradeLeverage,
-    market,
-    loading,
-    setTradeDirection,
-    updateTradingForm 
-  } = useTradingStore()
+  const { data: market, isLoading } = useMarketQuery()
+  const { openPosition } = useTradingMutations()
   
-  // Remove excessive console logs
-  
-  const { openPosition, calculateEstimatedValues } = useTrading()
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [tradeDirection, setTradeDirection] = useState<'long' | 'short'>('long')
+  const [tradeSize, setTradeSize] = useState('')
+  const [tradeMargin, setTradeMargin] = useState('')
 
-  const estimatedValues = calculateEstimatedValues()
-  const currentLeverage = tradeSize && tradeMargin 
+  const currentLeverage = tradeSize && tradeMargin && market
     ? calculateLeverage(parseFloat(tradeSize), parseFloat(tradeMargin), market.vvolPrice)
     : 1
 
+  const calculateEstimatedValues = () => {
+    if (!market) return { estimatedEntryPrice: 0, estimatedLiquidationPrice: 0, tradingFee: 0 }
+    
+    const sizeValue = parseFloat(tradeSize) || 0
+    const marginValue = parseFloat(tradeMargin) || 0
+    
+    const estimatedEntryPrice = market.vvolPrice
+    const leverage = sizeValue > 0 && marginValue > 0 ? (sizeValue * estimatedEntryPrice) / marginValue : 1
+    const isLong = tradeDirection === 'long'
+    
+    const maintenanceMargin = 0.05
+    const estimatedLiquidationPrice = isLong 
+      ? estimatedEntryPrice * (1 - (1 / leverage) + maintenanceMargin)
+      : estimatedEntryPrice * (1 + (1 / leverage) - maintenanceMargin)
+    
+    return {
+      estimatedEntryPrice,
+      estimatedLiquidationPrice: Math.max(0, estimatedLiquidationPrice),
+      tradingFee: marginValue * 0.001
+    }
+  }
+
   const handleSizeChange = useCallback((value: string) => {
-    updateTradingForm({ size: value })
-  }, [updateTradingForm])
+    setTradeSize(value)
+  }, [])
 
   const handleMarginChange = useCallback((value: string) => {
-    updateTradingForm({ margin: value })
-  }, [updateTradingForm])
+    setTradeMargin(value)
+  }, [])
 
   const handleLeverageChange = useCallback((value: number[]) => {
     const leverage = value[0]
-    if (tradeMargin) {
+    if (tradeMargin && market) {
       const newSize = (parseFloat(tradeMargin) * leverage) / market.vvolPrice
-      updateTradingForm({ size: newSize.toFixed(6), leverage })
+      setTradeSize(newSize.toFixed(6))
     }
-  }, [tradeMargin, market.vvolPrice, updateTradingForm])
+  }, [tradeMargin, market])
 
-  const handleSubmit = async () => {
-    if (!isConnected) return
+  const handleSubmit = () => {
+    if (!isConnected || !market) return
     
-    try {
-      setIsSubmitting(true)
-      await openPosition()
-    } catch (error) {
-      console.error('Trading error:', error)
-    } finally {
-      setIsSubmitting(false)
-    }
+    openPosition.mutate({
+      direction: tradeDirection,
+      size: tradeSize,
+      margin: tradeMargin
+    })
   }
 
   const isFormValid = tradeSize && tradeMargin && parseFloat(tradeSize) > 0 && parseFloat(tradeMargin) > 0
@@ -117,7 +126,7 @@ export function TradingForm() {
             min="0"
           />
           <div className="text-xs text-muted-foreground">
-            Current vVOL Price: {formatCurrency(market.vvolPrice)}
+            Current vVOL Price: {formatCurrency(market?.vvolPrice || 0)}
           </div>
         </div>
 
@@ -147,7 +156,7 @@ export function TradingForm() {
           </div>
           
           <Slider
-            value={[tradeLeverage]}
+            value={[currentLeverage]}
             onValueChange={handleLeverageChange}
             max={10}
             min={1}
@@ -170,25 +179,25 @@ export function TradingForm() {
         </div>
 
         {/* Position Summary */}
-        {isFormValid && (
+        {isFormValid && market && (
           <div className="space-y-3 p-4 bg-secondary/50 rounded-lg">
             <h4 className="font-medium">Position Summary</h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Estimated Entry Price</span>
-                <span>{formatCurrency(estimatedValues.estimatedEntryPrice)}</span>
+                <span>{formatCurrency(calculateEstimatedValues().estimatedEntryPrice)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Position Notional</span>
-                <span>{formatCurrency(parseFloat(tradeSize) * estimatedValues.estimatedEntryPrice)}</span>
+                <span>{formatCurrency(parseFloat(tradeSize || '0') * calculateEstimatedValues().estimatedEntryPrice)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Trading Fee (0.1%)</span>
-                <span>{formatCurrency(estimatedValues.tradingFee)}</span>
+                <span>{formatCurrency(calculateEstimatedValues().tradingFee)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Estimated Liquidation Price</span>
-                <span className="text-red-400">{formatCurrency(estimatedValues.estimatedLiquidationPrice)}</span>
+                <span className="text-red-400">{formatCurrency(calculateEstimatedValues().estimatedLiquidationPrice)}</span>
               </div>
             </div>
           </div>
@@ -197,7 +206,7 @@ export function TradingForm() {
         {/* Submit Button */}
         <Button
           onClick={handleSubmit}
-          disabled={!isConnected || !isFormValid || loading || isSubmitting}
+          disabled={!isConnected || !isFormValid || isLoading || openPosition.isPending}
           className={`w-full h-12 text-base font-medium ${
             tradeDirection === 'long' 
               ? 'bg-green-600 hover:bg-green-700' 
@@ -205,8 +214,13 @@ export function TradingForm() {
           }`}
         >
           {!isConnected ? 'Connect Wallet' : 
-           isSubmitting ? 'Opening Position...' :
-           loading ? 'Loading...' :
+           openPosition.isPending ? (
+             <>
+               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+               Opening Position...
+             </>
+           ) :
+           isLoading ? 'Loading Market Data...' :
            `Open ${tradeDirection === 'long' ? 'Long' : 'Short'} Position`}
         </Button>
 

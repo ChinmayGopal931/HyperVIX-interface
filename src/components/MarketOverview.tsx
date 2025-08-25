@@ -1,12 +1,35 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useTradingStore } from '@/store/trading'
-import { useFundingRate } from '@/hooks/useFundingRate'
+import { useMarketQuery } from '@/hooks/useMarketQuery'
+import { useFundingRateQuery } from '@/hooks/useFundingRateQuery'
 import { formatNumber, formatCurrency } from '@/lib/utils'
-import { TrendingUp, Clock, DollarSign } from 'lucide-react'
+import { TrendingUp, Clock, DollarSign, Loader2 } from 'lucide-react'
 
 export function MarketOverview() {
-  const { market } = useTradingStore()
-  const { predictedRate } = useFundingRate()
+  const { data: market, isLoading: isMarketLoading, error: marketError } = useMarketQuery()
+  const { data: fundingData } = useFundingRateQuery()
+
+
+  if (isMarketLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="ml-2">Loading market data...</span>
+      </div>
+    )
+  }
+
+  if (marketError) {
+    return (
+      <div className="text-center p-8">
+        <p className="text-red-500">Error loading market data</p>
+        <p className="text-sm text-muted-foreground mt-2">
+          {marketError instanceof Error ? marketError.message : 'Unknown error'}
+        </p>
+      </div>
+    )
+  }
+
+  if (!market) return null
 
 
   const formatTimeUntilNext = (timestamp: number) => {
@@ -27,15 +50,15 @@ export function MarketOverview() {
 
   const stats = [
     {
-      title: 'Volatility Index',
-      value: `${(market.volatility).toFixed(2)}`,
+      title: 'Volatility Annualized',
+      value: `${(market.volatility * 100).toFixed(2)}`,
       icon: TrendingUp,
       change: market.volatility > 0 ? 'Live' : 'N/A',
       isPositive: market.volatility > 0
     },
     {
-      title: 'vVOL Price',
-      value: market.vvolPrice,
+      title: 'vVOL Index',
+      value: (market.vvolPrice),
       icon: DollarSign,
       change: market.vvolPrice > 0 ? 'Live' : 'N/A',
       isPositive: market.vvolPrice > 0
@@ -49,7 +72,7 @@ export function MarketOverview() {
     },
     {
       title: 'Predicted Funding Rate',
-      value: `${(predictedRate * 100).toFixed(4)}%`,
+      value: `${((fundingData?.predictedRate || 0) * 100).toFixed(4)}%`,
       icon: Clock,
       subtitle: `Next: ${formatTimeUntilNext(market.nextFundingTime)}`,
       isNeutral: true
@@ -78,21 +101,7 @@ export function MarketOverview() {
                     </p>
                   )}
                 </div>
-                <div className={`p-2 rounded-lg ${
-                  stat.isNeutral 
-                    ? 'bg-muted' 
-                    : stat.isPositive 
-                    ? 'bg-green-500/20' 
-                    : 'bg-red-500/20'
-                }`}>
-                  <stat.icon className={`h-5 w-5 ${
-                    stat.isNeutral 
-                      ? 'text-muted-foreground' 
-                      : stat.isPositive 
-                      ? 'text-green-400' 
-                      : 'text-red-400'
-                  }`} />
-                </div>
+
               </div>
             </CardContent>
           </Card>
@@ -100,7 +109,7 @@ export function MarketOverview() {
       </div>
 
       {/* Market Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Market Information</CardTitle>
@@ -147,41 +156,6 @@ export function MarketOverview() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Price Comparison</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Mark Price</span>
-                <span className="font-medium">{formatCurrency(market.vvolPrice)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Index Price (ETH)</span>
-                <span className="font-medium">{formatCurrency(market.indexPrice || 0)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Premium/Discount</span>
-                <span className={`font-medium ${
-                  market.indexPrice && market.vvolPrice > market.indexPrice / 1000 
-                    ? 'price-positive' 
-                    : 'price-negative'
-                }`}>
-                  {market.indexPrice 
-                    ? `${(((market.vvolPrice - market.indexPrice / 1000) / (market.indexPrice / 1000)) * 100).toFixed(2)}%`
-                    : 'N/A'
-                  }
-                </span>
-              </div>
-            </div>
-            
-            <div className="pt-4 border-t">
-              <div className="text-sm text-muted-foreground mb-2">Mark Price indicates the current trading price on HyperVIX platform</div>
-              <div className="text-sm text-muted-foreground">Index Price shows the real ETH volatility reference</div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   )

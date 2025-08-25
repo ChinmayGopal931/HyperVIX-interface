@@ -1,21 +1,35 @@
+/**
+ * Event listener hook for contract events using TanStack Query
+ */
+
 import { useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useAccount } from 'wagmi'
 import { useContracts } from './useContracts'
-import { useMarketData } from './useMarketData'
-import { useUserData } from './useUserData'
 import { useToast } from './useToast'
 import { formatCurrency } from '@/lib/utils'
 
 export function useEvents() {
-  const { contracts, address } = useContracts()
-  const { fetchMarketData } = useMarketData()
-  const { fetchUserData } = useUserData()
+  const { contracts } = useContracts()
+  const { address } = useAccount()
+  const queryClient = useQueryClient()
   const { toast } = useToast()
+
+  // Invalidate queries to refresh data
+  const invalidateUserData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['user-data'] })
+  }, [queryClient])
+
+  const invalidateMarketData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['market-data'] })
+    queryClient.invalidateQueries({ queryKey: ['funding-rate'] })
+  }, [queryClient])
 
   const handlePositionOpened = useCallback((trader: string, sizeDelta: bigint, marginDelta: bigint, averagePrice: bigint) => {
     if (trader.toLowerCase() === address?.toLowerCase()) {
-      const size = Number(sizeDelta) / Math.pow(10, 18)
-      const margin = Number(marginDelta) / Math.pow(10, 6)
-      const price = Number(averagePrice) / Math.pow(10, 6)
+      const size = Number(sizeDelta) / 1e18
+      const margin = Number(marginDelta) / 1e18 // Updated to 18 decimals
+      const price = Number(averagePrice) / 1e18
       const isLong = Number(sizeDelta) > 0
       
       toast({
@@ -24,15 +38,14 @@ export function useEvents() {
         variant: 'default'
       })
       
-      // Refresh user data
-      fetchUserData()
+      invalidateUserData()
+      invalidateMarketData()
     }
-  }, [address, toast, fetchUserData])
+  }, [address, toast, invalidateUserData, invalidateMarketData])
 
   const handlePositionClosed = useCallback((trader: string, size: bigint, margin: bigint, pnl: bigint) => {
     if (trader.toLowerCase() === address?.toLowerCase()) {
-      const positionSize = Number(size) / Math.pow(10, 18)
-      const pnlValue = Number(pnl) / Math.pow(10, 6)
+      const pnlValue = Number(pnl) / 1e18 // Updated to 18 decimals
       const isProfitable = pnlValue > 0
       
       toast({
@@ -41,23 +54,23 @@ export function useEvents() {
         variant: isProfitable ? 'default' : 'destructive'
       })
       
-      // Refresh user data
-      fetchUserData()
+      invalidateUserData()
+      invalidateMarketData()
     }
-  }, [address, toast, fetchUserData])
+  }, [address, toast, invalidateUserData, invalidateMarketData])
 
-  const handleVolatilityUpdated = useCallback((newVariance: bigint, annualizedVolatility: bigint, timestamp: bigint) => {
+  const handleVolatilityUpdated = useCallback((newVolatility: bigint, cumulativePrice: bigint, timestamp: bigint) => {
     // Refresh market data when volatility updates
-    fetchMarketData()
-  }, [fetchMarketData])
+    invalidateMarketData()
+  }, [invalidateMarketData])
 
   const handleFundingSettled = useCallback((fundingRate: bigint, cumulativeFundingRate: bigint, timestamp: bigint) => {
-    // Refresh both market and user data when funding is settled
-    fetchMarketData()
+    // Refresh all data when funding is settled
+    invalidateMarketData()
     if (address) {
-      fetchUserData()
+      invalidateUserData()
     }
-  }, [fetchMarketData, fetchUserData, address])
+  }, [invalidateMarketData, invalidateUserData, address])
 
   const handleLiquidated = useCallback((trader: string, liquidator: string, size: bigint, liquidationReward: bigint) => {
     if (trader.toLowerCase() === address?.toLowerCase()) {
@@ -65,13 +78,13 @@ export function useEvents() {
         title: 'Position Liquidated',
         description: 'Your position has been liquidated due to insufficient margin',
         variant: 'destructive',
-        duration: 10000 // Show longer for important notifications
+        duration: 10000
       })
       
-      // Refresh user data
-      fetchUserData()
+      invalidateUserData()
+      invalidateMarketData()
     }
-  }, [address, toast, fetchUserData])
+  }, [address, toast, invalidateUserData, invalidateMarketData])
 
   useEffect(() => {
     if (!contracts) return
@@ -108,6 +121,8 @@ export function useEvents() {
 
   return {
     // Event handlers are automatically set up
-    // You can expose manual trigger functions here if needed
+    // Expose manual refresh functions if needed
+    refreshUserData: invalidateUserData,
+    refreshMarketData: invalidateMarketData
   }
 }

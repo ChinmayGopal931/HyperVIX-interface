@@ -1,142 +1,172 @@
-import { useEffect, useCallback } from 'react'
+/**
+ * @deprecated Use useMarketQuery instead
+ * This hook is kept for backward compatibility but should not be used in new code
+ */
+
+import { useEffect, useCallback, useRef } from 'react'
 import { useContracts } from './useContracts'
 import { useTradingStore } from '@/store/trading'
 
 export function useMarketData() {
-  const { contracts } = useContracts()
-  const { setMarketData, setLoading, setError } = useTradingStore()
+  const { contracts, isWrongNetwork, provider } = useContracts()
+  const setMarketData = useTradingStore(state => state.setMarketData)
+  const setLoading = useTradingStore(state => state.setLoading)
+  const setError = useTradingStore(state => state.setError)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchMarketData = useCallback(async () => {
-    if (!contracts) return
+    // ✅ NETWORK VALIDATION: Don't fetch if no contracts or wrong network
+    if (!contracts || !provider) {
+      return
+    }
+
+    if (isWrongNetwork) {
+      setError('Please switch to Hyperliquid Testnet (Chain ID: 998)')
+      setLoading(false)
+      return
+    }
 
     try {
       setLoading(true)
       setError(null)
 
-      // --- 1. Fetch on-chain data and off-chain price in parallel ---
-      const [
-        onChainData,
-        hyperliquidResponse
-      ] = await Promise.all([
-        // 🆕 NEW: Use comprehensive data fetching functions
-        Promise.all([
-          contracts.oracle.getAnnualizedVolatility(),
-          contracts.perpetual.getMarkPrice(),
-          contracts.oracle.getLastUpdateTime(),
-          contracts.perpetual.vBaseAssetReserve(),
-          contracts.perpetual.vQuoteAssetReserve(),
-          contracts.perpetual.cumulativeFundingRate(),
-          contracts.perpetual.lastFundingTime(),
-          contracts.perpetual.fundingInterval(),
-          contracts.perpetual.getTotalOpenInterest(), // 🆕 NEW: Returns [totalLongs, totalShorts, netExposure]
-          contracts.perpetual.maxLeverage(),
-          contracts.perpetual.maintenanceMarginRatio(),
-          contracts.perpetual.liquidationFee(),
-          contracts.perpetual.tradingFee()
-        ]),
-        // Fetch Hyperliquid price API
-        fetch('https://api.hyperliquid.xyz/info', {
+      // ✅ NETWORK CHECK: Verify we're still on the right network before any calls
+      const network = await provider.getNetwork()
+      if (network.chainId !== BigInt(998)) {
+        throw new Error(`Wrong network: Expected 998, got ${network.chainId}`)
+      }
+
+
+      // Test each contract call individually
+      const volatility = await contracts.oracle.getAnnualizedVolatility()
+
+      // Get vAMM reserves for manual mark price calculation
+      const vBaseReserve = await contracts.perpetual.vBaseAssetReserve()
+      const vQuoteReserve = await contracts.perpetual.vQuoteAssetReserve()
+      
+      // ✅ FIXED: Proper decimal handling for mark price calculation
+      // Both vQuoteReserve and vBaseReserve are now in 18 decimals
+      // Mark price = vQuoteReserve / vBaseReserve (both in 18 decimals)
+      const markPrice = (vQuoteReserve * BigInt(1e18)) / vBaseReserve
+
+
+      const lastUpdate = await contracts.oracle.getLastUpdateTime()
+
+      const fundingRate = await contracts.perpetual.cumulativeFundingRate()
+
+      const lastFundingTime = await contracts.perpetual.lastFundingTime()
+      const fundingInterval = await contracts.perpetual.fundingInterval()
+
+      // Get Open Interest data
+      const totalLongSize = await contracts.perpetual.totalLongSize()
+      const totalShortSize = await contracts.perpetual.totalShortSize()
+
+      // Get system parameters
+      const maxLeverage = await contracts.perpetual.maxLeverage()
+      const maintenanceMarginRatio = await contracts.perpetual.maintenanceMarginRatio()
+      const liquidationFee = await contracts.perpetual.liquidationFee()
+      const tradingFee = await contracts.perpetual.tradingFee()
+
+      // Fetch Hyperliquid price (with fallback)
+      let ethPrice = 3000 // Default fallback
+      try {
+        const response = await fetch('https://api.hyperliquid.xyz/info', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'allMids' })
         })
-      ]);
+        const prices = await response.json()
+        ethPrice = Number(prices.ETH || prices.UETH || 3000)
+      } catch (apiError) {
+        console.warn('Hyperliquid API failed, using fallback price:', apiError)
+      }
 
-      // --- 2. Process the results ---
-      const [
-        volatility,
-        markPrice,
-        lastUpdate,
-        vBaseReserve,
-        vQuoteReserve,
-        fundingRate,
-        lastFundingTime,
-        fundingInterval,
-        openInterestData, // 🆕 NEW: [totalLongs, totalShorts, netExposure]
-        maxLeverage,
-        maintenanceMarginRatio,
-        liquidationFee,
-        tradingFee
-      ] = onChainData;
-
-      console.log(        volatility,
-        markPrice,
-        lastUpdate,
-        vBaseReserve,
-        vQuoteReserve,
-        fundingRate,
-        lastFundingTime,
-        fundingInterval,
-        openInterestData, // 🆕 NEW: [totalLongs, totalShorts, netExposure]
-        maxLeverage,
-        maintenanceMarginRatio,
-        liquidationFee,
-        tradingFee)
-
-      const hyperliquidPrices = await hyperliquidResponse.json();
-      // Note: The symbol might be 'UETH' or another remapped name.
-      // Check the API response if 'ETH' doesn't work.
-      const ethPrice = Number(hyperliquidPrices.ETH);
-
-      // --- 3. Format and set the data ---
-      console.log('Raw contract data:', {
-        volatility: volatility.toString(),
-        markPrice: markPrice.toString(),
-        ethPrice,
-        fundingRate: fundingRate.toString(),
-        openInterestData: openInterestData,
-        maxLeverage: maxLeverage.toString()
-      })
-
-      // 🆕 NEW: Process open interest data
-      const [totalLongs, totalShorts, netExposure] = openInterestData
-      const totalOpenInterest = Number(totalLongs) / 1e18 + Number(totalShorts) / 1e18
+      // Calculate derived values
+      const totalLongs = Number(totalLongSize) / 1e18
+      const totalShorts = Number(totalShortSize) / 1e18
+      const totalOpenInterest = totalLongs + totalShorts
+      const netExposure = Math.abs(totalLongs - totalShorts)
 
       const formattedData = {
-        volatility: Number(volatility) / 1e18, // Remove * 100, should already be percentage
-        vvolPrice: (markPrice).toString() , // 🔧 FIX: Mark price should be 18 decimals, not 6
-        indexPrice: ethPrice, // ETH price from API
+        // Volatility as percentage (already scaled correctly)
+        volatility: Number(volatility) / 1e18,
+        
+        // ✅ FIXED: Use manually calculated mark price
+        vvolPrice: Number(markPrice) / 1e18,
+        
+        // Index price from API
+        indexPrice: ethPrice,
+        
         lastUpdate: Number(lastUpdate),
+        
+        // Funding rate
         fundingRate: Number(fundingRate) / 1e18,
         nextFundingTime: Number(lastFundingTime) + Number(fundingInterval),
-        volume24h: 0,
+        
+        volume24h: 0, // Not available on-chain
+        
         totalLiquidity: {
           vvol: Number(vBaseReserve) / 1e18,
-          usdc: Number(vQuoteReserve) / 1e6
+          usdc: Number(vQuoteReserve) / 1e18  // USDC now uses 18 decimals
         },
-        // 🆕 NEW: Enhanced market metrics with open interest breakdown
-        openInterest: totalOpenInterest, // Total of all positions
+        
+        // Open interest data
+        openInterest: totalOpenInterest,
         openInterestBreakdown: {
-          totalLongs: Number(totalLongs) / 1e18,
-          totalShorts: Number(totalShorts) / 1e18,
-          netExposure: Number(netExposure) / 1e18
+          totalLongs,
+          totalShorts,
+          netExposure
         },
-        maxLeverage: Number(maxLeverage) / 1e18, // Convert from wei to normal number
-        maintenanceMargin: Number(maintenanceMarginRatio) / 1e18 * 100, // Convert to percentage
-        liquidationFeeRate: Number(liquidationFee) / 1e18 * 100, // Convert to percentage
-        tradingFeeRate: Number(tradingFee) / 1e18 * 100 // Convert to percentage
+        
+        // System parameters
+        maxLeverage: Number(maxLeverage) / 1e18,
+        maintenanceMargin: Number(maintenanceMarginRatio) / 1e18 * 100,
+        liquidationFeeRate: Number(liquidationFee) / 1e18 * 100,
+        tradingFeeRate: Number(tradingFee) / 1e18 * 100
       }
 
       setMarketData(formattedData)
-    } catch (error) {
-      console.error('Error fetching market data:', error)
-      setError(error instanceof Error ? error.message : 'Failed to fetch market data')
+
+    } catch (error: any) {
+      console.error('❌ Error fetching market data:', error)
+      
+      // ✅ ENHANCED ERROR HANDLING: Better network error detection
+      if (error.code === 'NETWORK_ERROR' || error.message?.includes('network changed')) {
+        setError('Network error: Please ensure you are connected to Hyperliquid Testnet (Chain ID: 998)')
+      } else if (error.code === 'CALL_EXCEPTION') {
+        setError(`Contract call failed: ${error.data || 'Unknown selector'}. Check ABI compatibility.`)
+      } else if (error.message?.includes('Wrong network')) {
+        setError('Please switch to Hyperliquid Testnet (Chain ID: 998)')
+      } else {
+        setError(error instanceof Error ? error.message : 'Failed to fetch market data')
+      }
     } finally {
       setLoading(false)
     }
-  }, [contracts, setMarketData, setLoading, setError])
-
+  }, [contracts, provider, isWrongNetwork]) // ✅ FIXED: Include all dependencies
 
   useEffect(() => {
-    fetchMarketData()
-    
-    // Set up a single, faster polling interval for all market data
-    const marketDataInterval = setInterval(fetchMarketData, 10000) // Every 10 seconds
-
-    return () => {
-      clearInterval(marketDataInterval)
+    // Clear any existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
     }
-  }, [fetchMarketData])
+
+    // ✅ NETWORK VALIDATION: Only fetch if contracts are available and network is correct
+    if (contracts && provider && !isWrongNetwork) {
+      fetchMarketData()
+      
+      // ✅ REDUCE RERENDERS: Increase interval to reduce frequency
+      intervalRef.current = setInterval(fetchMarketData, 30000) // Every 30 seconds instead of 15
+    } 
+
+    // Cleanup on unmount or contracts change
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [contracts, provider, isWrongNetwork]) // ✅ REDUCE RERENDERS: Remove fetchMarketData from deps
 
   return {
     fetchMarketData

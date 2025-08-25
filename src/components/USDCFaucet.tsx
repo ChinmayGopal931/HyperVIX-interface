@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAccount } from 'wagmi'
 import { useContracts } from '@/hooks/useContracts'
-import { useUserData } from '@/hooks/useUserData'
+import { useQueryClient } from '@tanstack/react-query'
 import { parseUnits } from 'ethers'
 import { Coins, Gift, Loader2 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
@@ -12,7 +12,7 @@ import { formatCurrency } from '@/lib/utils'
 export function USDCFaucet() {
   const { address, isConnected } = useAccount()
   const { contracts } = useContracts()
-  const { fetchUserData } = useUserData()
+  const queryClient = useQueryClient()
   const [amount, setAmount] = useState('1000')
   const [isLoading, setIsLoading] = useState(false)
   const [lastClaim, setLastClaim] = useState<string | null>(null)
@@ -23,7 +23,7 @@ export function USDCFaucet() {
     try {
       setIsLoading(true)
       
-      const usdcAmount = parseUnits(amount, 6) // USDC has 6 decimals
+      const usdcAmount = parseUnits(amount, 18) // USDC now uses 18 decimals
       const usdcWrite = contracts.usdcWrite || contracts.usdc
       
       const tx = await usdcWrite.faucet(address, usdcAmount)
@@ -32,7 +32,7 @@ export function USDCFaucet() {
       setLastClaim(new Date().toLocaleTimeString())
       
       // Refresh user balance
-      await fetchUserData()
+      queryClient.invalidateQueries({ queryKey: ['user-data'] })
       
       // Show success message would go here
       console.log(`Successfully claimed ${amount} USDC!`)

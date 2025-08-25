@@ -1,8 +1,7 @@
-import { http, createConfig } from 'wagmi'
+import { http } from 'wagmi'
 import { defineChain } from 'viem'
-import { metaMask, walletConnect } from 'wagmi/connectors'
 
-export const hyperliquidTestnet = defineChain({
+export const CHAIN_CONFIG = defineChain({
   id: 998,
   name: 'Hyperliquid Testnet',
   nativeCurrency: {
@@ -20,21 +19,19 @@ export const hyperliquidTestnet = defineChain({
   },
 })
 
-export const config = createConfig({
-  chains: [hyperliquidTestnet],
-  connectors: [
-    metaMask(),
-    walletConnect({ 
-      projectId: 'your-walletconnect-project-id' // Replace with actual project ID
-    }),
-  ],
-  transports: {
-    [hyperliquidTestnet.id]: http(),
-  },
-})
+// export const wagmiConfig = getDefaultConfig({
+//   appName: 'HyperVIX',
+//   projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'e4ad3f996b22e95e67357a293a238cb6',
+//   chains: [CHAIN_CONFIG],
+//   ssr: false,
+// })
 
-declare module 'wagmi' {
-  interface Register {
-    config: typeof config
-  }
-}
+// Keep backwards compatibility
+// export const config = wagmiConfig
+// export const hyperliquidTestnet = CHAIN_CONFIG
+
+// declare module 'wagmi' {
+//   interface Register {
+//     config: typeof config
+//   }
+// }

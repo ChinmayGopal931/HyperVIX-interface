@@ -1,295 +1,273 @@
+/**
+ * Modern volatility chart showing Mark Price vs Index Price with trading activity
+ */
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { useTradingStore } from '@/store/trading'
-import { useContracts } from '@/hooks/useContracts'
-import { useEffect, useState } from 'react'
-
-interface ChartDataPoint {
-  timestamp: number
-  time: string
-  volatility: number
-  markPrice: number
-  indexPrice: number
-}
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
+import { useMarketQuery } from '@/hooks/useMarketQuery'
+import { useTradeHistory } from '@/hooks/useTradeHistory'
+import { useMarkPrice } from '@/hooks/useMarkPrice'
+import { formatCurrency } from '@/lib/utils'
+import { Loader2, Activity, TrendingUp } from 'lucide-react'
 
 export function VolatilityChart() {
-  const { selectedTimeframe, market } = useTradingStore()
-  const { contracts } = useContracts()
-  const [historicalData, setHistoricalData] = useState<ChartDataPoint[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [progress, setProgress] = useState<string>('')
+  const { data: market } = useMarketQuery()
+   const { trades, chartData, isLoading, error } = useTradeHistory()
+  const currentMarkPrice = useMarkPrice()
 
-  const fetchHistoricalData = async () => {
-    if (!contracts) return
-
-    try {
-      setLoading(true)
-      setError(null)
-      setProgress('Connecting to blockchain...')
-      
-      // Get current block number
-      const provider = contracts.oracle.runner?.provider
-      if (!provider) throw new Error('Provider not available')
-      const currentBlock = await provider.getBlockNumber()
-      
-      // Fetch events in chunks to avoid RPC limits
-      const CHUNK_SIZE = 1000 // Max blocks per request
-      const TOTAL_BLOCKS = 10000 // Total blocks to fetch
-      const startBlock = Math.max(0, currentBlock - TOTAL_BLOCKS)
-      
-      const allVolatilityEvents = []
-      const totalChunks = Math.ceil((currentBlock - startBlock) / CHUNK_SIZE)
-      let completedChunks = 0
-      
-      setProgress(`Fetching historical data (0/${totalChunks} chunks)...`)
-      
-      // Fetch in chunks
-      for (let fromBlock = startBlock; fromBlock < currentBlock; fromBlock += CHUNK_SIZE) {
-        const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, currentBlock)
-        
-        try {
-          const events = await contracts.oracle.queryFilter(
-            contracts.oracle.filters.VolatilityUpdated(),
-            fromBlock,
-            toBlock
-          )
-          allVolatilityEvents.push(...events)
-          completedChunks++
-          setProgress(`Fetching historical data (${completedChunks}/${totalChunks} chunks)...`)
-        } catch (chunkError) {
-          console.warn(`Failed to fetch chunk ${fromBlock}-${toBlock}:`, chunkError)
-          // Continue with other chunks
-        }
-      }
-
-      console.log('Fetched volatility events:', allVolatilityEvents.length)
-
-      if (allVolatilityEvents.length === 0) {
-        throw new Error('No historical volatility data found on the blockchain')
-      }
-
-      const chartData: ChartDataPoint[] = []
-      
-      // Process only the most recent events to avoid overwhelming the chart
-      const recentEvents = allVolatilityEvents.slice(-50)
-      setProgress(`Processing ${recentEvents.length} events...`)
-      
-      for (let i = 0; i < recentEvents.length; i++) {
-        const event = recentEvents[i]
-        try {
-          const block = await event.getBlock()
-          const timestamp = block.timestamp * 1000
-          const volatility = Number((event as any).args?.annualizedVolatility || 0) / Math.pow(10, 18) * 100
-          
-          // Get mark price at that time (current mark price for now)
-          const markPrice = market.vvolPrice
-          
-          chartData.push({
-            timestamp,
-            time: new Date(timestamp).toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit'
-            }),
-            volatility,
-            markPrice,
-            indexPrice: market.indexPrice || 0
-          })
-
-          if (i % 10 === 0) {
-            setProgress(`Processing events (${i + 1}/${recentEvents.length})...`)
-          }
-        } catch (blockError) {
-          console.warn('Failed to process event:', blockError)
-          // Continue with other events
-        }
-      }
-
-      if (chartData.length === 0) {
-        throw new Error('Failed to process any historical events')
-      }
-
-      // Sort by timestamp to ensure chronological order
-      chartData.sort((a, b) => a.timestamp - b.timestamp)
-      setHistoricalData(chartData)
-      setProgress('')
-    } catch (error) {
-      console.error('Error fetching historical data:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-      setError(errorMessage)
-      
-      // Fallback to current data point only
-      setHistoricalData([{
-        timestamp: Date.now(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        volatility: market.volatility,
-        markPrice: market.vvolPrice,
-        indexPrice: market.indexPrice || 0
-      }])
-    } finally {
-      setLoading(false)
-      setProgress('')
-    }
-  }
-
-  useEffect(() => {
-    fetchHistoricalData()
-  }, [contracts, market.volatility])
-
-  const data = historicalData.length > 0 ? historicalData : [{
+  // Create fallback data if no historical data
+  const fallbackData = market ? [{
     timestamp: Date.now(),
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    volatility: market.volatility,
     markPrice: market.vvolPrice,
-    indexPrice: market.indexPrice || 0
-  }]
+    indexPrice: market.volatility * 100, // Convert to percentage for display
+    volume: 0
+  }] : []
+  
+
+  const displayData = chartData.length > 0 ? chartData : fallbackData
+  const recentTrades = trades.slice(-20).reverse() // Show last 20 trades
+
+  if (isLoading && chartData.length === 0) {
+    return (
+      <Card className="trading-card">
+        <CardContent className="flex items-center justify-center h-80">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-6 w-6 animate-spin" />
+            <span>Loading trading data...</span>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card className="trading-card">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xl">
-            Volatility & Price Charts
-            {loading && <span className="text-sm font-normal text-muted-foreground ml-2">({progress || 'Loading...'})</span>}
-            {error && <span className="text-sm font-normal text-red-400 ml-2">(Error: {error})</span>}
+          <CardTitle className="text-xl flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            Volatility Trading Activity
+            {error && (
+              <span className="text-sm font-normal text-amber-400 ml-2">
+                (Limited data - using fallback)
+              </span>
+            )}
           </CardTitle>
-          <Tabs defaultValue="volatility" className="w-auto">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="volatility">Volatility</TabsTrigger>
-              <TabsTrigger value="price">Prices</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {data.length === 0 ? (
-          <div className="h-80 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <p>No historical data available</p>
-              <p className="text-sm mt-2">Contracts not deployed yet - using development mode</p>
+          <div className="text-right">
+            <div className="text-sm text-muted-foreground">Current Mark Price</div>
+            <div className="text-lg font-bold text-green-400">
+              {formatCurrency(currentMarkPrice)}
             </div>
           </div>
-        ) : (
-          <Tabs defaultValue="volatility" className="space-y-4">
-            <TabsContent value="volatility" className="space-y-4">
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height={320} minHeight={320}>
-                  <LineChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="#9CA3AF"
-                      fontSize={12}
-                    />
-                    <YAxis 
-                      stroke="#9CA3AF"
-                      fontSize={12}
-                      domain={data.length > 1 ? ['dataMin - 2', 'dataMax + 2'] : [0, 100]}
-                      tickFormatter={(value) => `${value.toFixed(1)}%`}
-                    />
-                    <Tooltip 
-                      contentStyle={{
-                        backgroundColor: '#1F2937',
-                        border: '1px solid #374151',
-                        borderRadius: '8px'
-                      }}
-                      formatter={(value: number) => [`${value.toFixed(2)}%`, 'Volatility']}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="volatility" 
-                      stroke="#10B981" 
-                      strokeWidth={2}
-                      dot={data.length === 1}
-                      activeDot={{ r: 4, stroke: '#10B981', strokeWidth: 2 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+        </div>
+      </CardHeader>
+      
+      <CardContent className="space-y-6">
+        <Tabs defaultValue="price" className="space-y-4">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="price">Price Chart</TabsTrigger>
+            <TabsTrigger value="volume">Volume</TabsTrigger>
+            <TabsTrigger value="trades">Live Trades</TabsTrigger>
+          </TabsList>
+
+          {/* Price Chart Tab - Mark Price vs Index Price */}
+          <TabsContent value="price">
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={displayData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9CA3AF"
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    stroke="#9CA3AF"
+                    fontSize={12}
+                    tickFormatter={(value) => formatCurrency(value)}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: '#1F2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px'
+                    }}
+                    formatter={(value: number, name: string) => [
+                      formatCurrency(value),
+                      name === 'markPrice' ? 'Mark Price (vVOL)' : 'Index Price (Volatility %)'
+                    ]}
+                    labelFormatter={(label) => `Time: ${label}`}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="markPrice" 
+                    stroke="#10B981" 
+                    strokeWidth={3}
+                    dot={displayData.length === 1}
+                    activeDot={{ r: 6, stroke: '#10B981', strokeWidth: 2 }}
+                    name="markPrice"
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="indexPrice" 
+                    stroke="#F59E0B" 
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={displayData.length === 1}
+                    activeDot={{ r: 4, stroke: '#F59E0B', strokeWidth: 2 }}
+                    name="indexPrice"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </TabsContent>
+
+          {/* Volume Chart Tab */}
+          <TabsContent value="volume">
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={displayData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9CA3AF"
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    stroke="#9CA3AF"
+                    fontSize={12}
+                    tickFormatter={(value) => `${value.toFixed(2)} vVOL`}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: '#1F2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px'
+                    }}
+                    formatter={(value: number) => [`${value.toFixed(4)} vVOL`, 'Volume']}
+                  />
+                  <Bar 
+                    dataKey="volume" 
+                    fill="#10B981" 
+                    opacity={0.8}
+                    radius={[2, 2, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </TabsContent>
+
+          {/* Live Trades Tab */}
+          <TabsContent value="trades">
+            <div className="h-80 overflow-hidden">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm font-medium text-muted-foreground border-b border-border pb-2">
+                  <span>Time</span>
+                  <span>Side</span>
+                  <span>Size</span>
+                  <span>Price</span>
+                </div>
+                <div className="max-h-64 overflow-y-auto space-y-1">
+                  {recentTrades.length > 0 ? (
+                    recentTrades.map((trade, index) => (
+                      <div 
+                        key={`${trade.timestamp}-${index}`}
+                        className="flex justify-between items-center text-sm py-1 px-2 rounded hover:bg-secondary/50"
+                      >
+                        <span className="text-muted-foreground font-mono">
+                          {trade.time}
+                        </span>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          trade.side === 'buy' 
+                            ? 'bg-green-500/20 text-green-400' 
+                            : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {trade.side.toUpperCase()}
+                        </span>
+                        <span className="font-mono">
+                          {trade.size.toFixed(4)}
+                        </span>
+                        <span className="font-mono font-medium">
+                          {formatCurrency(trade.markPrice)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-center h-32 text-muted-foreground">
+                      <div className="text-center">
+                        <TrendingUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p>No recent trades</p>
+                        <p className="text-xs">Waiting for trading activity...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </TabsContent>
-            
-            <TabsContent value="price" className="space-y-4">
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height={320} minHeight={320}>
-                  <LineChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="#9CA3AF"
-                      fontSize={12}
-                    />
-                    <YAxis 
-                      yAxisId="left"
-                      stroke="#9CA3AF"
-                      fontSize={12}
-                      tickFormatter={(value) => `$${value.toFixed(3)}`}
-                    />
-                    <YAxis 
-                      yAxisId="right"
-                      orientation="right"
-                      stroke="#9CA3AF"
-                      fontSize={12}
-                      tickFormatter={(value) => `$${value.toFixed(0)}`}
-                    />
-                    <Tooltip 
-                      contentStyle={{
-                        backgroundColor: '#1F2937',
-                        border: '1px solid #374151',
-                        borderRadius: '8px'
-                      }}
-                      formatter={(value: number, name: string) => [
-                        name === 'markPrice' ? `$${value.toFixed(4)}` : `$${value.toFixed(0)}`,
-                        name === 'markPrice' ? 'vVOL Price' : 'ETH Price'
-                      ]}
-                    />
-                    <Line 
-                      yAxisId="left"
-                      type="monotone" 
-                      dataKey="markPrice" 
-                      stroke="#10B981" 
-                      strokeWidth={2}
-                      dot={data.length === 1}
-                      name="markPrice"
-                    />
-                    {data.some(d => d.indexPrice > 0) && (
-                      <Line 
-                        yAxisId="right"
-                        type="monotone" 
-                        dataKey="indexPrice" 
-                        stroke="#F59E0B" 
-                        strokeWidth={2}
-                        dot={data.length === 1}
-                        strokeDasharray="5 5"
-                        name="indexPrice"
-                      />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </TabsContent>
-          </Tabs>
-        )}
-        
-        <div className="flex items-center justify-center gap-6 pt-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-0.5 bg-green-500"></div>
-            <span>vVOL Mark Price</span>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Chart Legend */}
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <div className="flex items-center gap-6 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-green-500 rounded"></div>
+              <span className="text-muted-foreground">Mark Price (vVOL Trading Price)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-yellow-500 rounded" style={{
+                backgroundImage: 'repeating-linear-gradient(90deg, #F59E0B, #F59E0B 3px, transparent 3px, transparent 6px)'
+              }}></div>
+              <span className="text-muted-foreground">Index Price (True Volatility %)</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-0.5 bg-yellow-500 border-dashed"></div>
-            <span>ETH Index Price</span>
-          </div>
-          <div className="text-xs">
+          
+          <div className="text-xs text-muted-foreground text-right">
             {error ? (
-              <span className="text-red-400">
-                Error loading data • Using fallback
-              </span>
+              <div className="text-amber-400">
+                Using fallback data • Limited blockchain access
+              </div>
             ) : (
-              <>Data from blockchain events • {data.length} point{data.length !== 1 ? 's' : ''}</>
+              <div>
+                <div>{displayData.length} data points</div>
+                <div>{recentTrades.length} recent trades</div>
+              </div>
             )}
           </div>
         </div>
+
+        {/* Market Stats */}
+        {market && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center border-t border-border pt-4">
+            <div>
+              <div className="text-xs text-muted-foreground">24h Volume</div>
+              <div className="text-sm font-medium">{formatCurrency(market.volume24h)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Open Interest</div>
+              <div className="text-sm font-medium">
+                {market.openInterest ? `${market.openInterest.toFixed(2)} vVOL` : 'N/A'}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Funding Rate</div>
+              <div className="text-sm font-medium">
+                {(market.fundingRate * 100).toFixed(4)}%
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Price Spread</div>
+              <div className="text-sm font-medium">
+                {market.vvolPrice && market.volatility ? 
+                  `${Math.abs((market.vvolPrice - market.volatility * 100) / market.vvolPrice * 100).toFixed(2)}%` : 
+                  'N/A'
+                }
+              </div>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

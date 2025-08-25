@@ -12,12 +12,17 @@ export const NETWORK_CONFIG = {
   }
 }
 
+    // VolatilityIndexOracle: "0x7C5a46B28047A05CE52C63b3414A2B561Ab78240",
+    // VolatilityPerpetual:   "0x31D155389269560815c890fb88405aFE8dFb3E2D",
+    // HyperVIXKeeper:        "0x25A887aB88eae505E2E90ab92F5F24DB7F019Cc1",
+    // MockUSDC:              "0x54d9067Fb4d81986Fb88fC1A6D4f67F3ff285B1B"
+
 export const CONTRACTS = {
   L1Read: "0xA4Ff3884260a944cfdEFAd872e7af7772e9eD167",
-  VolatilityIndexOracle: "0x2D024562377d132E8531547cA16c24236e8BA5d9", // 🆕 Latest deployment
-  VolatilityPerpetual: "0x3838F2B89EbB84835e4fDD393D5a15987e2FF809",   // 🆕 Latest deployment
-  HyperVIXKeeper: "0xAEF5f8424bBDcCb7b411d60feBac271a8d4D39FA",        // 🆕 Latest deployment
-  USDC: "0x46c3C49aFA1E26030545b7066a32c545E977652B"               // 🆕 Latest MockUSDC
+  VolatilityIndexOracle: "0x42336C82c4e727D98d37C626edF24eC44794157a", // 🆕 Updated deployment
+  VolatilityPerpetual: "0x4734c15878ff8f7EFd4a7D81A316B348808Ee7D7",   // 🆕 Updated deployment
+  HyperVIXKeeper: "0xEe2722216acaC9700cebFe4F8998E29d4a16CeE7",        // 🆕 Updated deployment
+  USDC: "0xeA852122fFcADE7345761317b5465776a85Caa39"               // 🆕 Updated MockUSDC
 }
 
 export const ORACLE_ABI = [
@@ -43,7 +48,10 @@ export const PERPETUAL_ABI = [
   
   // Market data
   "function getMarkPrice() public view returns (uint256)",
-  "function getTotalOpenInterest() external view returns (uint256 totalLongs, uint256 totalShorts, uint256 netExposure)",
+  
+  // ✅ FIXED: Individual OI tracking (use these instead of getTotalOpenInterest)
+  "function totalLongSize() external view returns (uint256)",
+  "function totalShortSize() external view returns (uint256)",
   
   // Trading functions
   "function openPosition(int256 sizeDelta, uint256 marginDelta) external",

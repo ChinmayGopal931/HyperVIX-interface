@@ -1,27 +1,73 @@
-import { WagmiProvider } from 'wagmi'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { config } from '@/lib/web3'
+import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
+import { ReactNode } from 'react'
+import { PrivyProvider } from '@privy-io/react-auth'
+import { WagmiProvider as PrivyWagmiProvider } from '@privy-io/wagmi'
+import { createConfig, http } from 'wagmi'
 import { Toaster } from '@/components/Toaster'
-import { WalletConnect } from '@/components/WalletConnect'
+import { PrivyConnectButton } from '@/components/PrivyConnectButton'
 import { MarketOverview } from '@/components/MarketOverview'
 import { TradingForm } from '@/components/TradingForm'
 import { PortfolioStats } from '@/components/PortfolioStats'
 import { NetworkCheck } from '@/components/NetworkCheck'
-
-import { useMarketData } from '@/hooks/useMarketData'
-import { useUserData } from '@/hooks/useUserData'
-import { useEvents } from '@/hooks/useEvents'
+import { USDCFaucet } from '@/components/USDCFaucet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Activity, BarChart3, Briefcase } from 'lucide-react'
 import { PositionInfo } from './components/PositionInfo'
+import { VolatilityChart } from './components/VolatilityChart'
+import { useEvents } from '@/hooks/useEvents'
+import { hyperliquidTestnet } from './lib/privy'
 
-const queryClient = new QueryClient()
+const wagmiConfig = createConfig({
+  chains: [hyperliquidTestnet],
+  transports: {
+    [hyperliquidTestnet.id]: http()
+  }
+})
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      gcTime: 1000 * 60 * 10, // 10 minutes
+      refetchOnWindowFocus: false,
+      retry: 3,
+    },
+    mutations: {
+      retry: 1,
+    },
+  },
+})
+
+interface ProvidersProps {
+  children: ReactNode
+}
+
+export function Providers({ children }: ProvidersProps) {
+  return (
+    <PrivyProvider
+      appId={import.meta.env.VITE_PRIVY_APP_ID || 'your-privy-app-id'}
+      config={{
+        loginMethods: ['wallet', 'email', 'sms'],
+        appearance: {
+          theme: 'dark',
+          accentColor: '#22c55e',
+        },
+        embeddedWallets: {
+          createOnLogin: 'users-without-wallets',
+        },
+      }}
+    >
+      <QueryClientProvider client={queryClient}>
+        <PrivyWagmiProvider config={wagmiConfig}>
+          {children}
+        </PrivyWagmiProvider>
+      </QueryClientProvider>
+    </PrivyProvider>
+  )
+}
 
 function AppContent() {
-  
-  // Initialize data hooks
-  useMarketData()
-  useUserData()
+  // Initialize event listeners
   useEvents()
 
   return (
@@ -40,7 +86,7 @@ function AppContent() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <WalletConnect />
+              <PrivyConnectButton />
             </div>
           </div>
         </div>
@@ -75,7 +121,7 @@ function AppContent() {
               </TabsList>
               
               <TabsContent value="chart" className="mt-6">
-                {/* <VolatilityChart /> */}
+                <VolatilityChart />
               </TabsContent>
               
               <TabsContent value="trade" className="mt-6">
@@ -83,13 +129,18 @@ function AppContent() {
               </TabsContent>
               
               <TabsContent value="portfolio" className="mt-6">
-                <PortfolioStats />
+                {/* <PortfolioStats /> */}
               </TabsContent>
             </Tabs>
             
             {/* Position Info - Full Width on Mobile */}
             <div className="mt-6">
               <PositionInfo />
+            </div>
+            
+            {/* Faucet - Full Width on Mobile */}
+            <div className="mt-6">
+              <USDCFaucet />
             </div>
           </div>
 
@@ -114,7 +165,12 @@ function AppContent() {
 
             {/* Bottom Row - Portfolio Stats */}
             <div className="mt-6">
-              <PortfolioStats />
+              {/* <PortfolioStats /> */}
+            </div>
+            
+            {/* Faucet - Full Width on Desktop */}
+            <div className="mt-6">
+              <USDCFaucet />
             </div>
           </div>
         </div>
@@ -144,11 +200,9 @@ function AppContent() {
 
 function App() {
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <AppContent />
-      </QueryClientProvider>
-    </WagmiProvider>
+    <Providers>
+      <AppContent />
+    </Providers>
   )
 }
 

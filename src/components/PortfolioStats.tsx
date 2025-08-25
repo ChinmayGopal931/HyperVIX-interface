@@ -1,13 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAccount } from 'wagmi'
-import { useTradingStore } from '@/store/trading'
-import { formatCurrency, formatNumber } from '@/lib/utils'
+import { useUserQuery } from '@/hooks/useUserQuery'
+import { formatCurrency } from '@/lib/utils'
 import { USDCFaucet } from '@/components/USDCFaucet'
-import { Wallet, TrendingUp, Shield, DollarSign } from 'lucide-react'
+import { Wallet, TrendingUp, Shield, DollarSign, Loader2 } from 'lucide-react'
 
 export function PortfolioStats() {
   const { isConnected } = useAccount()
-  const { user, market } = useTradingStore()
+  const { data: user, isLoading: isUserLoading } = useUserQuery()
 
   if (!isConnected) {
     return (
@@ -24,6 +24,24 @@ export function PortfolioStats() {
       </Card>
     )
   }
+
+  if (isUserLoading) {
+    return (
+      <Card className="trading-card">
+        <CardHeader>
+          <CardTitle className="text-xl">Portfolio Overview</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center py-8">
+            <Loader2 className="h-8 w-8 mx-auto animate-spin mb-4" />
+            <p className="text-muted-foreground">Loading portfolio data...</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!user) return null
 
   const totalValue = user.usdcBalance + (user.position?.margin || 0) + (user.position?.currentPnL || 0)
   const availableBalance = user.usdcBalance

@@ -1,38 +1,35 @@
 // In src/components/PositionInfo.tsx
 
-import { useState } from 'react'; // 👈 Import useState
-import { useTradingStore } from '@/store/trading';
-import { useTrading } from '@/hooks/useTrading'; // 👈 Import the useTrading hook
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'; // 👈 Import CardFooter
-import { Button } from '@/components/ui/button'; // 👈 Import Button
-import { formatCurrency } from '@/lib/utils';
-import { XCircle } from 'lucide-react'; // 👈 Import an icon for the button
+import { useUserQuery } from '@/hooks/useUserQuery'
+import { useTradingMutations } from '@/hooks/useTradingMutations'
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { formatCurrency } from '@/lib/utils'
+import { XCircle, Loader2 } from 'lucide-react'
 
 export function PositionInfo() {
-  const { position } = useTradingStore((state) => state.user);
-  const { closePosition } = useTrading(); // 👈 Get the closePosition function
-  const [isClosing, setIsClosing] = useState(false);
+  const { data: userData, isLoading } = useUserQuery()
+  const { closePosition } = useTradingMutations()
+
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    )
+  }
+
+  const position = userData?.position
 
   // Return null if there's no position
   if (!position) {
     return null;
   }
   
-  const handleClose = async () => {
-
-
-    setIsClosing(true);
-    try {
-      await closePosition();
-      // The position info will disappear automatically when useUserData refreshes
-    } catch (error) {
-      console.error("Failed to close position:", error);
-      // You could show a toast notification here
-    } finally {
-      setIsClosing(false);
-    }
-  };
-
+  const handleClose = () => {
+    closePosition.mutate()
+  }
 
   const isProfit = position.currentPnL >= 0;
   const pnlColor = isProfit ? 'text-green-400' : 'text-red-400';
@@ -59,7 +56,7 @@ export function PositionInfo() {
         </div>
         
         {/* Horizontal Layout for Position Details */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
           <div className="space-y-1">
             <span className="text-sm text-muted-foreground">Size (vVOL)</span>
             <div className="text-lg font-medium">{Math.abs(position.size).toFixed(4)}</div>
@@ -70,15 +67,11 @@ export function PositionInfo() {
           </div>
           <div className="space-y-1">
             <span className="text-sm text-muted-foreground">Margin</span>
-            <div className="text-lg font-medium">{formatCurrency(position.margin)} USDC</div>
-          </div>
-          <div className="space-y-1">
-            <span className="text-sm text-muted-foreground">Leverage</span>
-            <div className="text-lg font-medium">{position.leverage?.toFixed(2)}x</div>
+            <div className="text-lg font-medium">{formatCurrency(position.margin / 1e12)} USDC</div>
           </div>
           <div className="space-y-1">
             <span className="text-sm text-muted-foreground">Margin Ratio</span>
-            <div className="text-lg font-medium">{position.marginRatio ? (position.marginRatio * 100).toFixed(2) : 'N/A'}%</div>
+            <div className="text-lg font-medium">{position.marginRatio > 0 ? (position.margin / 1e12).toFixed(2) : 'N/A'}%</div>
           </div>
         </div>
       </CardContent>
@@ -86,12 +79,15 @@ export function PositionInfo() {
       <CardFooter>
         <Button
           onClick={handleClose}
-          disabled={isClosing}
+          disabled={closePosition.isPending}
           variant="destructive"
           className="w-full h-12 text-base font-medium"
         >
-          {isClosing ? (
-            'Closing...'
+          {closePosition.isPending ? (
+            <>
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              Closing...
+            </>
           ) : (
             <>
               <XCircle className="h-5 w-5 mr-2" />
